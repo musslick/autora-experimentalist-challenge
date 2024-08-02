@@ -1,4 +1,4 @@
-from autora.experimentalist.autora_experimentalist_example import sample
+from autora.experimentalist.autora_experimentalist_tutors import sample
 import numpy as np
 
 def test_output_dimensions():
