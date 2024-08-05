@@ -1,5 +1,5 @@
 """
-Example Experimentalist
+SAME Experimentalist
 """
 import numpy as np
 import pandas as pd
@@ -16,6 +16,16 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from autora.utils.deprecation import deprecated_alias
+import math
+# experimentalist
+from autora.experimentalist.grid import grid_pool
+from autora.experimentalist.random import random_pool, random_sample
+from autora.experimentalist.falsification import falsification_sample
+from autora.experimentalist.model_disagreement import model_disagreement_sample
+from autora.experimentalist.uncertainty import uncertainty_sample
+from autora.experimentalist.falsification import falsification_pool
+from autora.experimentalist.novelty import novelty_sample
+
 
 
 def score_sample(
@@ -128,46 +138,184 @@ def sample(
     return selected_conditions
 
 ##################################################################################################
-model_disagreement_sample = sample
-model_disagreement_score_sample = score_sample
-model_disagreement_sampler = deprecated_alias(
-    model_disagreement_sample, "model_disagreement_sampler"
-)
+
+def SAME_sample_type_alpha(conditions: Union[pd.DataFrame, np.ndarray], 
+                models: List,
+                reference_conditions: Union[pd.DataFrame, np.ndarray],
+                present_cycle: int,
+                total_no_of_cycles: int,
+                num_samples: int = 1):
+
+    limit_val_1 = math.ceil(total_no_of_cycles*0.5)
+
+    if present_cycle <= limit_val_1:
+        if isinstance(conditions, pd.DataFrame):
+            sorted_df = conditions.sort_values(by=list(conditions.columns), kind='mergesort').reset_index(drop=True)
+            if present_cycle>0:
+              for i in sorted_df.columns:
+                sorted_df = sorted_df[~sorted_df[i].isin(reference_conditions[i])]
+            if num_samples == 1:
+              return sorted_df.iloc[math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle:math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle + 1]
+            else:
+              return sorted_df.iloc[math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle:(math.ceil(len(sorted_df)/(limit_val_1)) * (present_cycle)) + num_samples]
+        
+        # Ensure conditions is a NumPy array
+        elif not isinstance(conditions, np.ndarray):
+            raise ValueError("conditions must be a pandas DataFrame or a NumPy array")
+        
+        # Get the number of columns
+        num_columns = conditions.shape[1]
+        # Create a tuple of column arrays for lexsort, in reverse order for proper sorting
+        sort_keys = tuple(conditions[:, i] for i in reversed(range(num_columns)))
+        
+        # Get sorted indices
+        sorted_indices = np.lexsort(sort_keys)
+        
+        # Return the sorted array
+        sorted_array = conditions[sorted_indices]
+        if num_samples == 1:
+          return sorted_array[limit_val_1 * present_cycle:limit_val_1 * present_cycle + 1]
+        else:
+          return sorted_array[limit_val_1 * present_cycle:(limit_val_1 * (present_cycle)) + num_samples]
+
+    else:
+      if isinstance(conditions, pd.DataFrame) and isinstance(reference_conditions, pd.DataFrame):
+        merged_df = conditions.merge(reference_conditions[list(conditions.columns)], how='left', indicator=True)
+        conditions = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+        return novelty_sample(conditions=conditions, reference_conditions=reference_conditions[list(conditions.columns)], num_samples=num_samples)
+      else:
+        df1_df = pd.DataFrame(conditions)
+        df2_df = pd.DataFrame(reference_conditions[:-1])
+        
+        # Perform the same anti-join logic
+        merged_df = df1_df.merge(df2_df, how='left', indicator=True)
+        result_df = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+        conditions = result_df.values
+        return novelty_sample(conditions=conditions, reference_conditions=reference_conditions[:-1], num_samples=num_samples)
+
+def SAME_sample_type_beta(conditions: Union[pd.DataFrame, np.ndarray], 
+                models: List,
+                reference_conditions: Union[pd.DataFrame, np.ndarray],
+                present_cycle: int,
+                total_no_of_cycles: int,
+                num_samples: int = 1):
+
+    limit_val_1 = math.ceil(total_no_of_cycles*0.5)
+
+    if present_cycle <= limit_val_1:
+        if isinstance(conditions, pd.DataFrame):
+            sorted_df = conditions.sort_values(by=list(conditions.columns), kind='mergesort').reset_index(drop=True)
+            if present_cycle>0:
+              for i in sorted_df.columns:
+                unique_counts = conditions[i].unique()
+                result = unique_counts > limit_val_1
+                if result.all():
+                  sorted_df = sorted_df[~sorted_df[i].isin(reference_conditions[i])]
+            if num_samples == 1:
+              return sorted_df.iloc[math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle:math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle + 1]
+            else:
+              return sorted_df.iloc[math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle:(math.ceil(len(sorted_df)/(limit_val_1)) * (present_cycle)) + num_samples]
+        
+        # Ensure conditions is a NumPy array
+        elif not isinstance(conditions, np.ndarray):
+            raise ValueError("conditions must be a pandas DataFrame or a NumPy array")
+        
+        # Get the number of columns
+        num_columns = conditions.shape[1]
+        # Create a tuple of column arrays for lexsort, in reverse order for proper sorting
+        sort_keys = tuple(conditions[:, i] for i in reversed(range(num_columns)))
+        
+        # Get sorted indices
+        sorted_indices = np.lexsort(sort_keys)
+        
+        # Return the sorted array
+        sorted_array = conditions[sorted_indices]
+        if num_samples == 1:
+          return sorted_array[limit_val_1 * present_cycle:limit_val_1 * present_cycle + 1]
+        else:
+          return sorted_array[limit_val_1 * present_cycle:(limit_val_1 * (present_cycle)) + num_samples]
+
+    else:
+      if isinstance(conditions, pd.DataFrame) and isinstance(reference_conditions, pd.DataFrame):
+        for i in conditions.columns:
+          unique_counts = conditions[i].unique()
+          result = unique_counts > total_no_of_cycles
+          if result.all():
+            conditions = conditions[~conditions[i].isin(reference_conditions[i])]
+          else:
+            merged_df = conditions.merge(reference_conditions[list(conditions.columns)], how='left', indicator=True)
+            conditions = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+        return novelty_sample(conditions=conditions, reference_conditions=reference_conditions[list(conditions.columns)], num_samples=num_samples)
+      else:
+        df1_df = pd.DataFrame(conditions)
+        df2_df = pd.DataFrame(reference_conditions[:-1])
+        
+        # Perform the same anti-join logic
+        merged_df = df1_df.merge(df2_df, how='left', indicator=True)
+        result_df = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+        conditions = result_df.values
+        return novelty_sample(conditions=conditions, reference_conditions=reference_conditions[:-1], num_samples=num_samples)
 
 
+def SAME_sample_type_gamma(conditions: Union[pd.DataFrame, np.ndarray], 
+                models: List,
+                reference_conditions: Union[pd.DataFrame, np.ndarray],
+                present_cycle: int,
+                total_no_of_cycles: int,
+                num_samples: int = 1):
 
+    limit_val_1 = math.ceil(total_no_of_cycles*0.33)
+    limit_val_2 = math.ceil(total_no_of_cycles*0.66)
+    limit_val_3 = int(total_no_of_cycles*0.83)
+    if present_cycle <= limit_val_1:
+        if isinstance(conditions, pd.DataFrame):
+            sorted_df = conditions.sort_values(by=list(conditions.columns), kind='mergesort').reset_index(drop=True)
+            if present_cycle>0:
+              for i in sorted_df.columns:
+                sorted_df = sorted_df[~sorted_df[i].isin(reference_conditions[i])]
+            if num_samples == 1:
+              return sorted_df.iloc[math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle:math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle + 1]
+            else:
+              return sorted_df.iloc[math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle:(math.ceil(len(sorted_df)/(limit_val_1)) * (present_cycle)) + num_samples]
+        
+        # Ensure conditions is a NumPy array
+        elif not isinstance(conditions, np.ndarray):
+            raise ValueError("conditions must be a pandas DataFrame or a NumPy array")
+        
+        # Get the number of columns
+        num_columns = conditions.shape[1]
+        # Create a tuple of column arrays for lexsort, in reverse order for proper sorting
+        sort_keys = tuple(conditions[:, i] for i in reversed(range(num_columns)))
+        
+        # Get sorted indices
+        sorted_indices = np.lexsort(sort_keys)
+        
+        # Return the sorted array
+        sorted_array = conditions[sorted_indices]
+        if num_samples == 1:
+          return sorted_array[limit_val_1 * present_cycle:limit_val_1 * present_cycle + 1]
+        else:
+          return sorted_array[limit_val_1 * present_cycle:(limit_val_1 * (present_cycle)) + num_samples]
 
-# def sample(
-#         conditions: Union[pd.DataFrame, np.ndarray],
-#         models: List,
-#         reference_conditions: Union[pd.DataFrame, np.ndarray],
-#         num_samples: int = 1) -> pd.DataFrame:
-#     """
-#     Add a description of the sampler here.
-
-#     Args:
-#         conditions: The pool to sample from.
-#             Attention: `conditions` is a field of the standard state
-#         models: The sampler might use output from the theorist.
-#             Attention: `models` is a field of the standard state
-#         reference_conditions: The sampler might use reference conditons
-#         num_samples: number of experimental conditions to select
-
-#     Returns:
-#         Sampled pool of experimental conditions
-
-#     *Optional*
-#     Examples:
-#         These examples add documentation and also work as tests
-#         >>> example_sampler([1, 2, 3, 4])
-#         1
-#         >>> example_sampler(range(3, 10))
-#         3
-
-#     """
-#     if num_samples is None:
-#         num_samples = conditions.shape[0]
-
-#     new_conditions = conditions
-
-#     return new_conditions[:num_samples]
+    elif present_cycle > limit_val_1 and present_cycle <= limit_val_2:
+      if isinstance(conditions, pd.DataFrame) and isinstance(reference_conditions, pd.DataFrame):
+        merged_df = conditions.merge(reference_conditions[list(conditions.columns)], how='left', indicator=True)
+        conditions = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+        return novelty_sample(conditions=conditions, reference_conditions=reference_conditions[list(conditions.columns)], num_samples=num_samples)
+      else:
+        df1_df = pd.DataFrame(conditions)
+        df2_df = pd.DataFrame(reference_conditions[:-1])
+        
+        # Perform the same anti-join logic
+        merged_df = df1_df.merge(df2_df, how='left', indicator=True)
+        result_df = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+        conditions = result_df.values
+        return novelty_sample(conditions=conditions, reference_conditions=reference_conditions[:-1], num_samples=num_samples)
+    else:
+      if len(models) == 2:
+        return model_disagreement_sample(conditions, models, num_samples)
+      elif len(models) == 3:
+        if present_cycle > limit_val_3:
+          return model_disagreement_sample(conditions, models[::2], num_samples)
+        else:
+          return model_disagreement_sample(conditions, models[:-1], num_samples)
