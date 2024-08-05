@@ -153,7 +153,8 @@ def SAME_sample_type_alpha(conditions: Union[pd.DataFrame, np.ndarray],
             sorted_df = conditions.sort_values(by=list(conditions.columns), kind='mergesort').reset_index(drop=True)
             if present_cycle>0:
               for i in sorted_df.columns:
-                sorted_df = sorted_df[~sorted_df[i].isin(reference_conditions[i])]
+                if sorted_df[i].nunique()>present_cycle:
+                  sorted_df = sorted_df[~sorted_df[i].isin(reference_conditions[i])]
             if num_samples == 1:
               return sorted_df.iloc[math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle:math.ceil(len(sorted_df)/(limit_val_1)) * present_cycle + 1]
             else:
