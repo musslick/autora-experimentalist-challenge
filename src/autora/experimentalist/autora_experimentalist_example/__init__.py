@@ -1,6 +1,11 @@
 """
 SAME Experimentalist
+
+This module implements various sampling strategies for model experimentation.
+The sampling methods include model disagreement, novelty, and cycle-based strategies 
+to select the most informative samples for further exploration.
 """
+
 import numpy as np
 import pandas as pd
 
@@ -32,14 +37,25 @@ def score_sample(
     conditions: Union[pd.DataFrame, np.ndarray],
     models: List,
     num_samples: Optional[int] = None,
-):
+) -> Union[pd.DataFrame, np.ndarray]:
+"""
+Scores the given conditions based on model disagreement and returns the top samples.
 
+Args:
+    conditions (Union[pd.DataFrame, np.ndarray]): The pool of conditions to be evaluated.
+    models (List): A list of models to compare.
+    num_samples (Optional[int]): Number of top samples to return. If None, returns all.
 
+Returns:
+    Union[pd.DataFrame, np.ndarray]: Conditions sorted by the score in descending order.
+"""
+# Convert to NumPy array if conditions are iterable but not a DataFrame or list
     if isinstance(conditions, Iterable) and not isinstance(conditions, pd.DataFrame) and not isinstance(conditions, list):
         conditions = np.array(list(conditions))
 
-    condition_pool_copy = conditions.copy()
+    condition_pool_copy = conditions.copy
 
+# Prepare X_predict based on the type of conditions
     if isinstance(conditions, list):
         X_predict = conditions
     else:
@@ -50,10 +66,10 @@ def score_sample(
 
     model_disagreement = list()
 
-    # collect diagreements for each model pair
+    # collect diagreements for each model pair 
     for model_a, model_b in itertools.combinations(models, 2):
 
-        # determine the prediction method
+        # determine the prediction method(either predict_proba or predict)
         if hasattr(model_a, "predict_proba") and hasattr(model_b, "predict_proba"):
             model_a_predict = model_a.predict_proba
             model_b_predict = model_b.predict_proba
@@ -84,6 +100,7 @@ def score_sample(
     # sum up all model disagreements
     summed_disagreement = np.sum(model_disagreement, axis=0)
 
+    # Reformat conditions based on the original type
     if isinstance(condition_pool_copy, pd.DataFrame):
         conditions = pd.DataFrame(conditions, columns=condition_pool_copy.columns)
     elif isinstance(condition_pool_copy, list):
@@ -91,7 +108,7 @@ def score_sample(
     else:
         conditions = pd.DataFrame(conditions)
 
-    # normalize the distances
+    # Normalize the disagreement scores
     scaler = StandardScaler()
     score = scaler.fit_transform(summed_disagreement.reshape(-1, 1)).flatten()
 
@@ -108,6 +125,18 @@ def score_sample(
 ##################################################################################################
 
 def compute_disagreement(model_a_predict, model_b_predict, X_predict,w_disagreement=1,w_distance=1):
+    """
+    Computes the disagreement between two models.
+    Args:
+        model_a_predict: Prediction method of the first model.
+        model_b_predict: Prediction method of the second model.
+        X_predict (np.ndarray): Conditions to predict on.
+        w_disagreement (float): Weight for disagreement component. Default is 1.
+        w_distance (float): Weight for distance component. Default is 1.
+
+    Returns:
+        np.ndarray: Disagreement scores between the two models.
+    """
     # get predictions from both models
     y_a = model_a_predict(X_predict)
     y_b = model_b_predict(X_predict)
@@ -120,7 +149,8 @@ def compute_disagreement(model_a_predict, model_b_predict, X_predict,w_disagreem
         # disagreement = w_disagreement*np.median(X_predict)*(y_a - y_b) ** 2 + w_distance*(X_predict-np.median(X_predict))**2
     else:
         disagreement = np.power(np.sqrt(.2*np.power((y_a - y_b),2) + np.power(X_predict-np.median(X_predict),2)),-1)*(np.power((y_a - y_b),2) + np.power(X_predict-np.median(X_predict),2)) #np.mean((y_a - y_b) ** 2, axis=1)+(X_predict-np.median(X_predict))**2
-
+    
+    # Handle NaN or infinite values in disagreement
     if np.isinf(disagreement).any() or np.isnan(disagreement).any():
         warnings.warn('Found nan or inf values in model predictions, '
                       'setting disagreement there to 0')
@@ -129,8 +159,19 @@ def compute_disagreement(model_a_predict, model_b_predict, X_predict,w_disagreem
     return disagreement
 ##################################################################################################
 def sample(
-    conditions: Union[pd.DataFrame, np.ndarray], models: List, num_samples: int = 1):
-   
+    conditions: Union[pd.DataFrame, np.ndarray], models: List, num_samples: int = 1
+) -> Union[pd.DataFrame, np.ndarray]:
+   """
+    Selects samples based on model disagreement scores.
+
+    Args:
+        conditions (Union[pd.DataFrame, np.ndarray]): The pool of conditions to sample from.
+        models (List): A list of models to compare.
+        num_samples (int): Number of samples to select. Default is 1.
+
+    Returns:
+        Union[pd.DataFrame, np.ndarray]: Selected conditions.
+    """
 
     selected_conditions = score_sample(conditions, models, num_samples)
     selected_conditions.drop(columns=["score"], inplace=True)
@@ -144,7 +185,23 @@ def SAME_sample_type_alpha(conditions: Union[pd.DataFrame, np.ndarray],
                 reference_conditions: Union[pd.DataFrame, np.ndarray],
                 present_cycle: int,
                 total_no_of_cycles: int,
-                num_samples: int = 1):
+                num_samples: int = 1
+) -> Union[pd.DataFrame, np.ndarray]:
+    
+"""
+    Performs type alpha sampling based on the current cycle.
+
+    Args:
+        conditions (Union[pd.DataFrame, np.ndarray]): The pool of conditions to sample from.
+        models (List): List of predictive models.
+        reference_conditions (Union[pd.DataFrame, np.ndarray]): Conditions from previous cycles.
+        present_cycle (int): The current cycle number.
+        total_no_of_cycles (int): Total number of cycles.
+        num_samples (int, optional): Number of samples to select. Defaults to 1.
+
+    Returns:
+        Union[pd.DataFrame, np.ndarray]: The selected conditions based on the current cycle and sampling strategy.
+    """
 
     limit_val_1 = math.ceil(total_no_of_cycles*0.5)
 
@@ -164,7 +221,8 @@ def SAME_sample_type_alpha(conditions: Union[pd.DataFrame, np.ndarray],
         elif not isinstance(conditions, np.ndarray):
             raise ValueError("conditions must be a pandas DataFrame or a NumPy array")
         
-        # Get the number of columns
+         # Sort the conditions using lexsort
+         # Get the number of columns
         num_columns = conditions.shape[1]
         # Create a tuple of column arrays for lexsort, in reverse order for proper sorting
         sort_keys = tuple(conditions[:, i] for i in reversed(range(num_columns)))
@@ -199,7 +257,22 @@ def SAME_sample_type_beta(conditions: Union[pd.DataFrame, np.ndarray],
                 reference_conditions: Union[pd.DataFrame, np.ndarray],
                 present_cycle: int,
                 total_no_of_cycles: int,
-                num_samples: int = 1):
+                num_samples: int = 1
+) -> Union[pd.DataFrame, np.ndarray]:
+"""
+    Performs type beta sampling based on the current cycle.
+
+    Args:
+        conditions (Union[pd.DataFrame, np.ndarray]): The pool of conditions to sample from.
+        models (List): List of predictive models.
+        reference_conditions (Union[pd.DataFrame, np.ndarray]): Conditions from previous cycles.
+        present_cycle (int): The current cycle number.
+        total_no_of_cycles (int): Total number of cycles.
+        num_samples (int, optional): Number of samples to select. Defaults to 1.
+
+    Returns:
+        Union[pd.DataFrame, np.ndarray]: The selected conditions based on the current cycle and sampling strategy.
+    """
 
     limit_val_1 = math.ceil(total_no_of_cycles*0.5)
 
@@ -263,12 +336,28 @@ def SAME_sample_type_gamma(conditions: Union[pd.DataFrame, np.ndarray],
                 reference_conditions: Union[pd.DataFrame, np.ndarray],
                 present_cycle: int,
                 total_no_of_cycles: int,
-                num_samples: int = 1):
+                num_samples: int = 1
+) -> Union[pd.DataFrame, np.ndarray]:
+"""
+    Performs type gamma sampling based on the current cycle.
+
+    Args:
+        conditions (Union[pd.DataFrame, np.ndarray]): The pool of conditions to sample from.
+        models (List): List of predictive models.
+        reference_conditions (Union[pd.DataFrame, np.ndarray]): Conditions from previous cycles.
+        present_cycle (int): The current cycle number.
+        total_no_of_cycles (int): Total number of cycles.
+        num_samples (int, optional): Number of samples to select. Defaults to 1.
+
+    Returns:
+        Union[pd.DataFrame, np.ndarray]: The selected conditions based on the current cycle and sampling strategy.
+    """
 
     limit_val_1 = math.ceil(total_no_of_cycles*0.33)
     limit_val_2 = math.ceil(total_no_of_cycles*0.66)
     limit_val_3 = int(total_no_of_cycles*0.83)
     if present_cycle <= limit_val_1:
+        # Sorting phase
         if isinstance(conditions, pd.DataFrame):
             sorted_df = conditions.sort_values(by=list(conditions.columns), kind='mergesort').reset_index(drop=True)
             if present_cycle>0:
@@ -299,6 +388,7 @@ def SAME_sample_type_gamma(conditions: Union[pd.DataFrame, np.ndarray],
           return sorted_array[limit_val_1 * present_cycle:(limit_val_1 * (present_cycle)) + num_samples]
 
     elif present_cycle > limit_val_1 and present_cycle <= limit_val_2:
+      # Novelty sampling phase
       if isinstance(conditions, pd.DataFrame) and isinstance(reference_conditions, pd.DataFrame):
         merged_df = conditions.merge(reference_conditions[list(conditions.columns)], how='left', indicator=True)
         conditions = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
@@ -313,6 +403,7 @@ def SAME_sample_type_gamma(conditions: Union[pd.DataFrame, np.ndarray],
         conditions = result_df.values
         return novelty_sample(conditions=conditions, reference_conditions=reference_conditions[:-1], num_samples=num_samples)
     else:
+      # Model disagreement sampling phase
       if len(models) == 2:
         return model_disagreement_sample(conditions, models, num_samples)
       elif len(models) == 3:
